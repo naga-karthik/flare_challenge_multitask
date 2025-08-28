@@ -15,11 +15,11 @@ This repository contains the code for training a UNet-based joint classification
 
 Both the default trainer and the trainer with extensive data augmentations (\texttt{DA5}) performed similarly on both segmentation and classification accuracy.
 
-| **Model**                    | **DSC**  | **F1-macro** |
-|---------------------- |-------------|--------------------------------|
+| **Model**                    | **DSC** | | **F1-macro** |
+|---------------------- |-------------|-----------|---------------------|
 |                       | label=1  | label=2               |      |
 | nnUNetResEncM_default | 0.80     | 0.46                  | 0.78 |
-| nnUNetResEncM_DA5     | 0.81     | 0.46.                 | 0.76 |
+| nnUNetResEncM_DA5     | 0.81     | 0.46                 | 0.76 |
 
 
 ### How to run
