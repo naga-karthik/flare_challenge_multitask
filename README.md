@@ -24,6 +24,8 @@ Both the default trainer and the trainer with extensive data augmentations (\tex
 
 ### How to run
 
+The code was developed and tested on Ubuntu, with Python 3.10 and CUDA 12.0. Models were trained on a single NVIDIA A6000 GPU with 48GB memory.
+
 1. Create a conda environment and install the required packages listed below.
 
     ```bash 
