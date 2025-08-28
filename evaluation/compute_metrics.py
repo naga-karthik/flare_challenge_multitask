@@ -1,45 +1,16 @@
 """
-Compute MetricsReloaded metrics for segmentation and classification tasks.
+Compute MetricsReloaded metrics for segmentation and classification tasks. 
+Given path to the model folder containing all folds, the script computes metrics for each fold and outputs a csv
+containing average metrics across all folds.
+The metrics are computed for each unique label (class) in the reference (ground truth) image.
 
-For MetricsReloaded installation and usage of this script, see:
-https://github.com/ivadomed/utilities/blob/main/quick_start_guides/MetricsReloaded_quick_start_guide.md
-
-Example usage (single reference-prediction pair):
-    python compute_metrics_reloaded.py
-        -reference sub-001_T2w_seg.nii.gz
-        -prediction sub-001_T2w_prediction.nii.gz
-
-Example usage (multiple reference-prediction pairs, e.g., multiple subjects in the dataset):
-    python compute_metrics_reloaded.py
-        -reference /path/to/reference
-        -prediction /path/to/prediction
-NOTE: The prediction and reference files are matched based on the participant_id, acq_id, and run_id.
-
-The metrics to be computed can be specified using the `-metrics` argument. For example, to compute only the Dice
-similarity coefficient (DSC) and Normalized surface distance (NSD), use:
-    python compute_metrics_reloaded.py
-        -reference sub-001_T2w_seg.nii.gz
-        -prediction sub-001_T2w_prediction.nii.gz
-        -metrics dsc nsd
-For a lesion-wise evaluation with a minimum 10% overlap between GT and pred masks, use:
-    python compute_metrics_reloaded.py
-        -reference sub-001_T2w_seg.nii.gz
-        -prediction sub-001_T2w_prediction.nii.gz
-        -metrics dsc nsd rel_vol_error lesion_ppv lesion_sensitivity lesion_f1_score ref_count pred_count
-        --overlap-ratio 0.1
-        
-See https://arxiv.org/abs/2206.01653v5 for nice figures explaining the metrics!
-
-The output is saved to a CSV file, for example:
+Usage example:
+python compute_metrics.py -path-model /path/to/model/folder -reference /path/to/reference/folder -output metrics.csv
 
 reference   prediction	label	dsc nsd	EmptyRef	EmptyPred
 seg.nii.gz	pred.nii.gz	1.0	0.819	0.945   False	False
 seg.nii.gz	pred.nii.gz	2.0	0.743	0.923   False	False
 
-The script is compatible with both binary and multi-class segmentation tasks (e.g., nnunet region-based).
-The metrics are computed for each unique label (class) in the reference (ground truth) image.
-
-Authors: Jan Valosek, Naga Karthik
 """
 
 
@@ -67,9 +38,8 @@ def get_parser():
     parser = argparse.ArgumentParser(description='Compute MetricsReloaded metrics for segmentation tasks.')
 
     # Arguments for model, data, and training
-    parser.add_argument('-prediction', required=True, type=str,
-                        help='Path to the folder with nifti images of test predictions or path to a single nifti image '
-                             'of test prediction.')
+    parser.add_argument('-path-model', required=True, type=str,
+                        help='Path to the folder containing all folds (i.e. fold_0, fold_1, etc)')
     parser.add_argument('-reference', required=True, type=str,
                         help='Path to the folder with nifti images of reference (ground truth) or path to a single '
                              'nifti image of reference (ground truth).')
@@ -81,11 +51,6 @@ def get_parser():
                              'see: https://metricsreloaded.readthedocs.io/en/latest/reference/metrics/metrics.html.')
     parser.add_argument('-output', type=str, default='metrics.csv', required=False,
                         help='Path to the output CSV file to save the metrics. Default: metrics.csv')
-    parser.add_argument('-jobs', type=int, default=cpu_count()//8, required=False,
-                        help='Number of CPU cores to use in parallel. Default: cpu_count()//8.')
-    parser.add_argument('--overlap-ratio', type=float, default=0.1, required=False,
-                        help='Overlap ratio between the ground-truth and prediction to be considered as true positive (TP).'
-                         'Used only in counting TPs in lesion-wise metrics. Default: 0.1')
 
     return parser
 
@@ -167,7 +132,6 @@ def compute_f1_macro(path_csv):
 
     y_true, y_pred = [], []
     for i, row in df.iterrows():
-        print(row)
         y_true.append(int(row['name'].split('_')[-2]))
         y_pred.append(int(row['subtype']))
 
@@ -281,38 +245,58 @@ def main():
     parser = get_parser()
     args = parser.parse_args()
 
-    # Initialize a list to store the output dictionaries (representing a single reference-prediction pair per subject)
-    output_list = list()
+    folds_avail = [f for f in os.listdir(args.path_model) if f.startswith('fold_')]
 
-    # Print the metrics to be computed
-    print(f'Computing metrics: {args.metrics}')
-    # print(f'Using {args.jobs} CPU cores in parallel ...')
+    f1_mac_avg = []
+    df_folds = pd.DataFrame()
+    for fold in sorted(folds_avail):
 
-    # compute f1 macro
-    f1_macro_classification = compute_f1_macro(os.path.join(args.prediction, "lesion_subtype_predictions.csv"))
+        print(f"Computing metrics for {fold} ...")
+        path_predictions = os.path.join(args.path_model, fold, 'test')
 
-    # Args.prediction and args.reference are paths to folders with multiple nii.gz files (i.e., MULTIPLE subjects)
-    if os.path.isdir(args.prediction) and os.path.isdir(args.reference):
-        # Get all files in the directories
-        prediction_files, reference_files = get_images(args.prediction, args.reference)
+        # ----------------------------
+        # compute f1 macro
+        # ----------------------------
+        f1_macro_classification = compute_f1_macro(os.path.join(path_predictions, "lesion_subtype_predictions.csv"))
+        f1_mac_avg.append(f1_macro_classification)
+        print(f"F1-macro score for lesion subtype classification on {fold}: {f1_macro_classification:.3f}")
 
-        for pred, ref in zip(prediction_files, reference_files):
-            # print(f'Prediction: {pred}, Reference: {ref}')
-            metrics_dict = compute_metrics_single_subject(pred, ref, args.metrics)
-            # Append the output dictionary (representing a single reference-prediction pair per subject)
-            output_list.append(metrics_dict)
+        # Initialize a list to store the output dictionaries (representing a single reference-prediction pair per subject)
+        output_list = list()
 
-    else:
-        metrics_dict = compute_metrics_single_subject(args.prediction, args.reference, args.metrics, args.overlap_ratio)
-        # Append the output dictionary (representing a single reference-prediction pair per subject) to the output_list
-        output_list.append(metrics_dict)
+        # Args.prediction and args.reference are paths to folders with multiple nii.gz files (i.e., MULTIPLE subjects)
+        if os.path.isdir(path_predictions) and os.path.isdir(args.reference):
+            # Get all files in the directories
+            prediction_files, reference_files = get_images(path_predictions, args.reference)
 
-    # Convert JSON data to pandas DataFrame
-    df = build_output_dataframe(output_list)
+            for pred, ref in zip(prediction_files, reference_files):
+                # print(f'Prediction: {pred}, Reference: {ref}')
+                metrics_dict = compute_metrics_single_subject(pred, ref, args.metrics)
+                # Append the output dictionary (representing a single reference-prediction pair per subject)
+                output_list.append(metrics_dict)
+        # else:
+        #     metrics_dict = compute_metrics_single_subject(args.prediction, args.reference, args.metrics,)
+        #     # Append the output dictionary (representing a single reference-prediction pair per subject) to the output_list
+        #     output_list.append(metrics_dict)
 
-    # Compute mean and standard deviation of metrics across all subjects
-    df_mean = (df.drop(columns=['reference', 'prediction', 'EmptyRef', 'EmptyPred']).groupby('label').
+
+        # Convert JSON data to pandas DataFrame
+        df = build_output_dataframe(output_list)
+
+        df['fold'] = fold
+        # df.to_csv(os.path.join(args.path_model, f"metrics_all_subjects_{fold}.csv"), index=False)
+        df_folds = pd.concat([df_folds, df], axis=0)
+
+    # Average F1-macro score across all folds
+    f1_mac_mean, f1_mac_std = np.mean(f1_mac_avg), np.std(f1_mac_avg)
+    print(f"\nAverage F1-macro score for lesion subtype classification across all folds: {f1_mac_mean:.3f} +/- {f1_mac_std:.3f}")
+
+    df_folds.to_csv(os.path.join(args.path_model, 'metrics_all_subjects_all_folds.csv'), index=False)
+    
+    # average metrics across all folds
+    df_mean = (df_folds.drop(columns=['reference', 'prediction', 'fold', 'EmptyRef', 'EmptyPred']).groupby('label').
                agg(['mean', 'std']).reset_index())
+    print(df_mean)
 
     # Convert multi-index to flat index
     df_mean.columns = ['_'.join(col).strip() for col in df_mean.columns.values]
@@ -327,15 +311,15 @@ def main():
     df = df.round(3)
     df_mean = df_mean.round(3)
 
-    # print the mean metrics to the console
-    print('\nMean and standard deviation of metrics across all subjects:')
-    print(df_mean.to_string(index=False))
-    print(f'\nF1-macro score for classification task: {f1_macro_classification:.3f}')
+    # # print the mean metrics to the console
+    # print('\nMean and standard deviation of metrics across all subjects:')
+    # print(df_mean.to_string(index=False))
+    # print(f'\nF1-macro score for classification task: {f1_macro_classification:.3f}')
 
-    # save as CSV
-    fname_output_csv = os.path.abspath(args.output)
-    df.to_csv(fname_output_csv, index=False)
-    print(f'Saved metrics to {fname_output_csv}.')
+    # # save as CSV
+    # fname_output_csv = os.path.abspath(args.output)
+    # df.to_csv(fname_output_csv, index=False)
+    # print(f'Saved metrics to {fname_output_csv}.')
 
     # save as CSV
     fname_output_csv_mean = os.path.abspath(args.output.replace('.csv', '_mean.csv'))
